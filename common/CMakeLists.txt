@@ -169,4 +169,33 @@ if (LLAMA_LLGUIDANCE)
     endif()
 endif()
 
+if (LLAMA_XET)
+    if (NOT LLAMA_OPENSSL)
+        message(FATAL_ERROR
+            "LLAMA_XET=ON requires LLAMA_OPENSSL=ON "
+            "(HF metadata API is still fetched over HTTPS).")
+    endif()
+
+    include(ExternalProject)
+    set(LLAMA_XET_SRC  ${CMAKE_SOURCE_DIR}/common/llama-xet)
+    set(LLAMA_XET_PATH ${CMAKE_BINARY_DIR}/llama-xet/target/release)
+    set(LLAMA_XET_LIB_NAME "${CMAKE_STATIC_LIBRARY_PREFIX}llama_xet${CMAKE_STATIC_LIBRARY_SUFFIX}")
+
+    ExternalProject_Add(llama_xet_ext
+        SOURCE_DIR         ${LLAMA_XET_SRC}
+        PREFIX             ${CMAKE_BINARY_DIR}/llama-xet
+        CONFIGURE_COMMAND  ""
+        BUILD_COMMAND      cargo build --release --target-dir ${CMAKE_BINARY_DIR}/llama-xet/target
+        BUILD_IN_SOURCE    1
+        INSTALL_COMMAND    ""
+        BUILD_BYPRODUCTS   ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME}
+    )
+
+    target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_XET)
+    add_library(llama_xet STATIC IMPORTED)
+    set_target_properties(llama_xet PROPERTIES IMPORTED_LOCATION ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME})
+    add_dependencies(llama_xet llama_xet_ext)
+    target_link_libraries(${TARGET} PRIVATE llama_xet)
+endif()
+
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)

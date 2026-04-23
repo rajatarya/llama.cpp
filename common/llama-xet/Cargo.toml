@@ -1,0 +1,10 @@
+[package]
+name    = "llama-xet"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name       = "llama_xet"
+crate-type = ["staticlib"]
+
+[dependencies]
