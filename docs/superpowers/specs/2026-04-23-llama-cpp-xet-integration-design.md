@@ -59,7 +59,7 @@ flowchart TB
     end
 
     subgraph XC["xet-core (UNCHANGED)"]
-        SESSION["xet_pkg::XetSession"]
+        SESSION["xet::xet_session::XetSession"]
         GROUP["XetFileDownloadGroup"]
         TOK["token refresh via<br/>/api/models/.../xet-read-token/{rev}"]
     end
@@ -108,7 +108,7 @@ graph TD
     end
 
     subgraph L4["External (pinned SHA, zero changes)"]
-        XP["xet_pkg::XetSession<br/>(xet-core repo)"]
+        XP["xet::xet_session::XetSession<br/>(xet-core repo)"]
     end
 
     BIN --> DL
@@ -175,7 +175,7 @@ Same structure maintainers have already approved for llguidance. Reviewing this 
 
 ### 5.2 Rust wrapper crate: `common/llama-xet/`
 
-A thin, llama.cpp-local Rust crate whose only job is to expose a stable C ABI over `xet_pkg::XetSession`. Vendors xet-core as a git dependency pinned to a known SHA.
+A thin, llama.cpp-local Rust crate whose only job is to expose a stable C ABI over `xet::xet_session::XetSession`. Vendors xet-core as a git dependency pinned to a known SHA.
 
 **Integration point: `XetSession` — not the legacy `data_client::download_files` path.** The Python `hf_xet::download_files` entry point (in `hf_xet/src/lib.rs:274`) wraps `data_client` for backwards compatibility with `huggingface_hub`'s older consumers. That is *not* the model to copy. The Rust shim in this crate is built directly on:
 

@@ -16,7 +16,14 @@
 
 **Goal:** Add an optional `LLAMA_XET` build flag that routes Hugging Face model downloads through xet-core's `XetSession` (chunk-level dedup + resume), with silent fallback to the existing cpp-httplib path for non-Xet-backed files or Xet errors.
 
-**Architecture:** A new in-tree Rust crate (`common/llama-xet/`) exposes a narrow C ABI over `xet_pkg::XetSession`. A guarded branch in `common_download_model()` invokes this ABI when all files in a plan are Xet-backed; otherwise the existing `std::async` + cpp-httplib fanout runs unchanged. Build-system pattern cloned from the existing `llguidance` integration.
+**Architecture:** A new in-tree Rust crate (`common/llama-xet/`) exposes a narrow C ABI over xet-core's `XetSession`. A guarded branch in `common_download_model()` invokes this ABI when all files in a plan are Xet-backed; otherwise the existing `std::async` + cpp-httplib fanout runs unchanged. Build-system pattern cloned from the existing `llguidance` integration.
+
+> **Naming gotcha (learned in Task 2):** xet-core's download crate has three different names:
+> - Directory on disk: `xet_pkg/`
+> - Cargo package name: `hf-xet` (use in `[dependencies]`)
+> - Rust library name: `xet` (use in `use ...` imports)
+>
+> So the right Cargo.toml entry is `hf-xet = { git = "...", rev = "..." }` and the right Rust import is `use xet::xet_session::XetSession`. All Rust code samples below use the `xet::` form.
 
 **Tech Stack:** C++17 (llama.cpp), Rust 2021 (wrapper crate), CMake 3.x (`ExternalProject_Add` + `cargo build`), cbindgen (auto-generated C header), xet-core pinned at SHA `b43c0aec`.
 
@@ -185,11 +192,11 @@ Goal: add `xet_pkg` as a dependency at SHA `b43c0aec`. Verify it compiles (this 
   #[allow(dead_code)]
   fn _probe_xet_session_exists() -> Option<&'static str> {
       // Reference the type so the linker keeps it.
-      std::any::type_name::<xet_pkg::xet_session::XetSession>().into()
+      std::any::type_name::<xet::xet_session::XetSession>()
   }
   ```
 
-  Note: the module path is `xet_pkg::xet_session::XetSession`. If the path differs in the pinned SHA, fix the use statement — check `xet_pkg/src/lib.rs` in the xet-core checkout under `/Users/rajat/code/hf/xet-core`.
+  Note: the Rust import is `xet::xet_session::XetSession` — the crate's `[lib] name = "xet"` overrides the dashes-to-underscores convention that would otherwise give `hf_xet`. See the naming-gotcha note at the top of the plan.
 
 - [ ] **Step 2.3: Build**
 
@@ -420,7 +427,7 @@ Goal: expose `llama_xet_session_new`, `llama_xet_session_free`, `llama_xet_sessi
   ```rust
   use std::ffi::CStr;
   use std::os::raw::c_char;
-  use xet_pkg::xet_session::{XetSession, XetSessionBuilder};
+  use xet::xet_session::{XetSession, XetSessionBuilder};
 
   use crate::error;
 
@@ -555,7 +562,7 @@ Read `xet_pkg/src/xet_session/file_download_group.rs` before writing this — in
   use std::os::raw::{c_char, c_void};
   use std::path::PathBuf;
 
-  use xet_pkg::xet_session::XetFileInfo;
+  use xet::xet_session::XetFileInfo;
 
   use crate::error;
   use crate::session::LlamaXetSession;
