@@ -19,11 +19,27 @@ static std::string append_suffix(const std::string & path, const char * sfx) {
     return path + sfx;
 }
 
+// Thunk that trampolines the C callback from llama-xet into a
+// C++ common_download_callback*. user_data is the callback pointer.
+extern "C" void xet_progress_thunk(void * user_data,
+                                   uint64_t completed_bytes,
+                                   uint64_t total_bytes) {
+    auto * cb = static_cast<common_download_callback *>(user_data);
+    if (!cb) return;
+    common_download_progress p;
+    p.url        = "xet://batch";
+    p.downloaded = static_cast<size_t>(completed_bytes);
+    p.total      = static_cast<size_t>(total_bytes);
+    p.cached     = false;
+    cb->on_update(p);
+}
+
 try_result try_xet_download(
     const hf_cache::hf_files &      files,
     const hf_cache::hf_xet_token &  xet_token,
     const std::string &             bearer_token,
-    const std::string &             token_refresh_url)
+    const std::string &             token_refresh_url,
+    common_download_callback *      progress_cb)
 {
     try_result r;
 
@@ -80,13 +96,29 @@ try_result try_xet_download(
         return r;
     }
 
-    // Progress callback wired in Task 11 — no-op for now so Task 10
-    // is isolated from the common_download_opts progress integration.
+    // Start-of-batch progress event so the CLI progress bar initializes.
+    if (progress_cb) {
+        common_download_progress p0;
+        p0.url    = "xet://batch";
+        p0.total  = 0;
+        for (const auto & f : files) p0.total += f.size;
+        progress_cb->on_start(p0);
+    }
+
     int32_t rc = llama_xet_download_files(
         session.get(), infos.data(), infos.size(),
-        /*progress_cb*/ nullptr, /*user_data*/ nullptr);
+        progress_cb ? xet_progress_thunk : nullptr,
+        static_cast<void *>(progress_cb));
     if (rc != LXET_OK) {
         r.error = "llama_xet_download_files rc=" + std::to_string(rc) + ": " + last_error();
+        if (progress_cb) {
+            common_download_progress p_fail;
+            p_fail.url        = "xet://batch";
+            p_fail.downloaded = 0;
+            p_fail.total      = 0;
+            for (const auto & f : files) p_fail.total += f.size;
+            progress_cb->on_done(p_fail, /*ok=*/false);
+        }
         // Best-effort cleanup of any partial .xetInProgress files so the
         // cpp-httplib fallback doesn't mistake them for resume state.
         for (const auto & p : in_progress_paths) {
@@ -107,6 +139,18 @@ try_result try_xet_download(
                     + "): " + ec.message();
             return r;
         }
+    }
+
+    if (progress_cb) {
+        common_download_progress p_done;
+        p_done.url = "xet://batch";
+        p_done.downloaded = 0;
+        p_done.total      = 0;
+        for (const auto & f : files) {
+            p_done.downloaded += f.size;
+            p_done.total      += f.size;
+        }
+        progress_cb->on_done(p_done, /*ok=*/true);
     }
 
     r.ok = true;

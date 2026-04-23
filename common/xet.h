@@ -18,6 +18,7 @@
 
 #include "llama-xet.h"   // cbindgen-generated, on llama-common's include path
 #include "hf-cache.h"    // hf_files, hf_xet_token
+#include "download.h"    // common_download_callback (optional, may be nullptr)
 
 #include <memory>
 #include <string>
@@ -70,7 +71,8 @@ try_result try_xet_download(
     const hf_cache::hf_files &     files,
     const hf_cache::hf_xet_token & xet_token,
     const std::string &            bearer_token,
-    const std::string &            token_refresh_url);
+    const std::string &            token_refresh_url,
+    common_download_callback *     progress_cb = nullptr);
 
 } // namespace llama_xet
 
