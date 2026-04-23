@@ -82,6 +82,8 @@ add_library(${TARGET}
     json-partial.h
     json-schema-to-grammar.cpp
     llguidance.cpp
+    xet.cpp
+    xet.h
     log.cpp
     log.h
     ngram-cache.cpp
@@ -199,6 +201,23 @@ if (LLAMA_XET)
     add_dependencies(llama_xet llama_xet_ext)
     target_include_directories(${TARGET} PRIVATE ${LLAMA_XET_PATH})
     target_link_libraries(${TARGET} PRIVATE llama_xet)
+
+    # Platform-specific system libs pulled in by xet-core's transitive
+    # reqwest + hyper-util dependency tree.
+    if (APPLE)
+        # hyper-util system-proxy feature resolves macOS HTTP proxy via
+        # SystemConfiguration; CoreFoundation is the transitive dep.
+        target_link_libraries(${TARGET} PRIVATE
+            "-framework SystemConfiguration"
+            "-framework CoreFoundation"
+            "-framework Security"
+            "-framework IOKit")
+    elseif (UNIX)
+        # reqwest's sync feature uses pthread_atfork on glibc.
+        target_link_libraries(${TARGET} PRIVATE pthread dl)
+    elseif (WIN32)
+        target_link_libraries(${TARGET} PRIVATE userenv ws2_32 bcrypt advapi32)
+    endif()
 endif()
 
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)
