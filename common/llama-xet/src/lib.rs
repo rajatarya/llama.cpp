@@ -9,6 +9,9 @@
 //! `use xet::xet_session::XetSession`.
 
 mod error;
+mod session;
+
+pub use session::LlamaXetSession;
 
 use std::ffi::c_char;
 
@@ -33,6 +36,48 @@ pub extern "C" fn llama_xet_version() -> *const c_char {
 #[no_mangle]
 pub extern "C" fn llama_xet_last_error() -> *const c_char {
     error::get_ptr()
+}
+
+/// Creates a new XetSession. The three string arguments may be NULL.
+///
+/// - `endpoint`: CAS URL base. If NULL, xet-core resolves it from the
+///   token-refresh response.
+/// - `bearer_token`: HF bearer token. If NULL, anonymous access is
+///   attempted (will fail for private repos).
+/// - `token_refresh_url`: Full URL to the HF `xet-read-token/{rev}`
+///   endpoint. If NULL, xet-core uses the static bearer token for
+///   the lifetime of the session (refresh disabled).
+///
+/// Returns NULL on failure. Call `llama_xet_last_error` for the
+/// diagnostic message. On success, caller owns the returned handle
+/// and must eventually free it with `llama_xet_session_free`.
+#[no_mangle]
+pub extern "C" fn llama_xet_session_new(
+    endpoint:          *const c_char,
+    bearer_token:      *const c_char,
+    token_refresh_url: *const c_char,
+) -> *mut LlamaXetSession {
+    match session::new_inner(endpoint, bearer_token, token_refresh_url) {
+        Some(b) => Box::into_raw(b),
+        None    => std::ptr::null_mut(),
+    }
+}
+
+/// Frees a session handle previously returned by `llama_xet_session_new`.
+/// Calling with NULL is a safe no-op. Must be called at most once per
+/// handle; double-free is undefined behavior.
+#[no_mangle]
+pub extern "C" fn llama_xet_session_free(session: *mut LlamaXetSession) {
+    session::free_inner(session);
+}
+
+/// Requests cancellation of any in-flight downloads on the given
+/// session. Safe to call from a signal handler and safe to call
+/// with NULL. The pending download call will return a "cancelled"
+/// error shortly after.
+#[no_mangle]
+pub extern "C" fn llama_xet_session_abort(session: *mut LlamaXetSession) {
+    session::abort_inner(session);
 }
 
 // Temporary — kept until Task 5 wraps XetSession for real so the

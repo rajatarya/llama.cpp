@@ -8,8 +8,8 @@ documentation = true
 sys_includes = ["stdint.h", "stddef.h"]
 no_includes = true
 
-[export]
-prefix = "LlamaXet"
+# Our Rust types are already LlamaXet-prefixed manually, so no export
+# prefix needed (would double-stamp to LlamaXetLlamaXetSession).
 
 [parse]
 parse_deps = false
