@@ -30,7 +30,9 @@ fn main() {
         .expect("cbindgen failed to generate bindings")
         .write_to_file(&header_path);
 
-    println!("cargo:rerun-if-changed=src/lib.rs");
+    // Rerun when any source file changes. The `src` directory coverage
+    // is important as we grow the FFI surface across multiple modules.
+    println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=build.rs");
 }

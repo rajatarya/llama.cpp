@@ -187,6 +187,7 @@ if (LLAMA_XET)
         CONFIGURE_COMMAND  ""
         BUILD_COMMAND      cargo build --release --target-dir ${CMAKE_BINARY_DIR}/llama-xet/target
         BUILD_IN_SOURCE    1
+        BUILD_ALWAYS       1
         INSTALL_COMMAND    ""
         BUILD_BYPRODUCTS   ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME}
                            ${LLAMA_XET_PATH}/llama-xet.h
