@@ -8,12 +8,19 @@
 //! So our dep is `hf-xet = {...}` and our import is
 //! `use xet::xet_session::XetSession`.
 
+mod download;
 mod error;
 mod session;
 
+pub use download::{
+    LlamaXetFileInfo, LlamaXetProgressFn,
+    LXET_OK, LXET_ERR_INVALID_ARG, LXET_ERR_AUTH,
+    LXET_ERR_NETWORK, LXET_ERR_INTEGRITY, LXET_ERR_CANCELLED, LXET_ERR_OTHER,
+};
 pub use session::LlamaXetSession;
 
 use std::ffi::c_char;
+use std::os::raw::c_void;
 
 /// Returns a static, NUL-terminated string identifying the pinned
 /// xet-core revision this build links against. The returned pointer
@@ -78,6 +85,37 @@ pub extern "C" fn llama_xet_session_free(session: *mut LlamaXetSession) {
 #[no_mangle]
 pub extern "C" fn llama_xet_session_abort(session: *mut LlamaXetSession) {
     session::abort_inner(session);
+}
+
+/// Downloads a batch of Xet-backed files in one group, blocking until
+/// all complete or one fails. Progress is reported via the optional
+/// callback at ~250ms cadence with cumulative bytes across the batch.
+///
+/// On failure, files that completed remain on disk (caller may reuse
+/// them or delete and retry). Use `llama_xet_last_error()` for a
+/// human-readable diagnostic.
+///
+/// Returns one of the `LXET_*` codes defined in the generated header.
+///
+/// # Safety
+///
+/// - `session` must be a handle returned by `llama_xet_session_new`,
+///   not yet freed.
+/// - `files` must point to at least `file_count` valid `LlamaXetFileInfo`
+///   structs. Each struct's `hash` and `dest_path` must be valid
+///   NUL-terminated UTF-8 C strings.
+/// - Parent directories of every `dest_path` must exist.
+/// - The progress callback, if non-NULL, must be safe to invoke
+///   from a background thread with the caller's `user_data` pointer.
+#[no_mangle]
+pub extern "C" fn llama_xet_download_files(
+    session:     *mut LlamaXetSession,
+    files:       *const LlamaXetFileInfo,
+    file_count:  usize,
+    progress_cb: LlamaXetProgressFn,
+    user_data:   *mut c_void,
+) -> i32 {
+    download::download_inner(session, files, file_count, progress_cb, user_data)
 }
 
 // Temporary — kept until Task 5 wraps XetSession for real so the
