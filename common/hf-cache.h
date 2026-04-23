@@ -25,11 +25,32 @@ struct hf_file {
 
 using hf_files = std::vector<hf_file>;
 
+// Scoped Xet-CAS access token fetched from HF.
+struct hf_xet_token {
+    std::string access_token;     // empty on failure / non-Xet repo
+    uint64_t    expiry_unix_secs = 0;
+    std::string cas_url;
+};
+
 // Get files from HF API
 hf_files get_repo_files(
     const std::string & repo_id,
     const std::string & token
 );
+
+// Fetch a scoped Xet-CAS token for a given repo + revision.
+// On any failure (non-Xet repo, 404, network, schema mismatch),
+// returns a token with empty access_token; callers should check
+// .access_token.empty() and fall back to the plain HTTPS path.
+hf_xet_token get_xet_token(
+    const std::string & repo_id,
+    const std::string & rev,
+    const std::string & token
+);
+
+// Testable helper: parse the body of an HF xet-read-token response.
+// Returns a token with empty fields on any schema mismatch.
+hf_xet_token parse_xet_token_response(const std::string & body);
 
 hf_files get_cached_files(const std::string & repo_id = {});
 
