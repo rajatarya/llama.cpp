@@ -177,6 +177,17 @@ Same structure maintainers have already approved for llguidance. Reviewing this 
 
 A thin, llama.cpp-local Rust crate whose only job is to expose a stable C ABI over `xet_pkg::XetSession`. Vendors xet-core as a git dependency pinned to a known SHA.
 
+**Integration point: `XetSession` — not the legacy `data_client::download_files` path.** The Python `hf_xet::download_files` entry point (in `hf_xet/src/lib.rs:274`) wraps `data_client` for backwards compatibility with `huggingface_hub`'s older consumers. That is *not* the model to copy. The Rust shim in this crate is built directly on:
+
+- `XetSessionBuilder::new().with_tokio_handle(...).build()` — or runtime-owned mode when called outside tokio
+- `XetSession::new_file_download_group()` — the canonical, forward-looking download primitive
+- `XetFileDownloadGroup::download_file_to_path()` queued per file
+- `.finish_blocking()` to wait for the whole batch
+
+`XetSession` is the same surface used by emerging consumers like OpenDAL and Parquet readers for Xet-backed blob access — building on it means llama.cpp joins a small but growing set of projects that can share bug fixes, perf improvements, and API stabilization work upstream. Building on the legacy `data_client` would isolate llama.cpp on a code path other consumers are moving off of.
+
+The C function name `llama_xet_download_files` is chosen for familiarity — it reads naturally to a C++ caller — but its body uses `XetSession` primitives exclusively.
+
 ```
 common/llama-xet/
 ├── Cargo.toml          # deps: xet_pkg (git+rev), libc, once_cell
@@ -455,7 +466,7 @@ Machine: clean VM, one network interface, no pre-populated cache between runs. N
 
 | Risk | Mitigation |
 |---|---|
-| HF tree API schema for `xet_hash` may differ from assumed. | Verify against live API before implementation. If absent, derive from `xet-read-token` response or from a HEAD `X-Xet-*` header. Keep the metadata-fetch function isolated so the schema detail is localized. |
+| HF tree API schema for `xet_hash` may differ from assumed. | Verify against live API before implementation. If absent, derive from `xet-read-token` response or from a HEAD `X-Xet-*` header. Keep the metadata-fetch function isolated so the schema detail is localized. **If metadata retrieval fails for any reason (schema drift, network, auth), log at verbose level and fall through to the cpp-httplib path — never block the download on Xet metadata.** |
 | xet-core pinned SHA drifts over time. | Pin to a known-good SHA in `Cargo.toml`; upgrade in separate dependency-bump PRs. Don't track `main`. |
 | Rust toolchain becomes a hard build dep for anyone enabling `LLAMA_XET`. | Already true for `LLAMA_LLGUIDANCE`. `LLAMA_XET=OFF` default means no new requirement for the common build. Document in `docs/build.md`. |
 | Binary size increases when `LLAMA_XET=ON`. | Report the size in the PR. Expected +2–5 MB from tokio/reqwest/hashing. `OFF` default protects people who don't want it. |
