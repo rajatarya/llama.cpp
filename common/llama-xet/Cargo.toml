@@ -8,3 +8,9 @@ name       = "llama_xet"
 crate-type = ["staticlib"]
 
 [dependencies]
+# The xet-core workspace crate lives in `xet_pkg/` on disk but its
+# package name is `hf-xet` — that's what Cargo resolves on. The
+# PyO3 wrapper at `hf_xet/` is a different crate (same import name,
+# excluded from the workspace) and is NOT what we want here.
+hf-xet = { git = "https://github.com/huggingface/xet-core", rev = "b43c0aec" }
+libc   = "0.2"
