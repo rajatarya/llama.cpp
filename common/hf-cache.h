@@ -15,6 +15,12 @@ struct hf_file {
     std::string oid;
     std::string repo_id;
     size_t size = 0; // only for the migration
+
+    // Xet content-addressed hash, populated from the HF tree API
+    // `xetHash` field when a file is Xet-backed. Empty otherwise.
+    // Used by the LLAMA_XET download path; not used by the cpp-httplib
+    // path.
+    std::string xet_hash;
 };
 
 using hf_files = std::vector<hf_file>;

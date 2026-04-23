@@ -346,6 +346,12 @@ hf_files get_repo_files(const std::string & repo_id,
                 file.size = item["size"].get<size_t>();
             }
 
+            // HF tree API returns `xetHash` (camelCase, top-level) for
+            // files stored in Xet CAS. Absent for legacy LFS-only blobs.
+            if (item.contains("xetHash") && item["xetHash"].is_string()) {
+                file.xet_hash = item["xetHash"].get<std::string>();
+            }
+
             if (!file.oid.empty() && !is_valid_oid(file.oid)) {
                 LOG_WRN("%s: skip invalid oid: %s\n", __func__, file.oid.c_str());
                 continue;
