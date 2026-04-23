@@ -5,6 +5,9 @@
 #include "log.h"
 #include "download.h"
 #include "hf-cache.h"
+#ifdef LLAMA_USE_XET
+#include "xet.h"
+#endif
 
 #define JSON_ASSERT GGML_ASSERT
 #include <nlohmann/json.hpp>
@@ -670,9 +673,10 @@ static void list_available_gguf_files(const hf_cache::hf_files & files) {
 }
 
 struct hf_plan {
-    hf_cache::hf_file primary;
-    hf_cache::hf_files model_files;
-    hf_cache::hf_file mmproj;
+    hf_cache::hf_file     primary;
+    hf_cache::hf_files    model_files;
+    hf_cache::hf_file     mmproj;
+    hf_cache::hf_xet_token xet_token;   // populated iff any file has a xetHash
 };
 
 static hf_plan get_hf_plan(const common_params_model  & model,
@@ -721,6 +725,17 @@ static hf_plan get_hf_plan(const common_params_model  & model,
 
     if (download_mmproj) {
         plan.mmproj = find_best_mmproj(all, primary.path);
+    }
+
+    // If any file in the final plan has a xetHash, fetch a scoped
+    // Xet-CAS read token so the orchestrator can take the fast path.
+    // Cheap HTTP call; only fired when there's a plausible Xet path.
+    bool any_xet = !plan.primary.xet_hash.empty();
+    for (const auto & f : plan.model_files) any_xet = any_xet || !f.xet_hash.empty();
+    if (!plan.mmproj.path.empty()) any_xet = any_xet || !plan.mmproj.xet_hash.empty();
+    if (any_xet && !opts.offline) {
+        plan.xet_token = hf_cache::get_xet_token(
+            repo, plan.primary.revision, opts.bearer_token);
     }
 
     return plan;
@@ -781,6 +796,45 @@ common_download_model_result common_download_model(const common_params_model  & 
     if (tasks.empty()) {
         return result;
     }
+
+#ifdef LLAMA_USE_XET
+    // Fast path: if this is an HF download and every file is Xet-backed
+    // and we have a scoped CAS token, run the whole batch through
+    // llama-xet. Any failure (including schema mismatches, auth
+    // problems, or mid-stream errors) falls through silently to the
+    // existing std::async + cpp-httplib fanout below.
+    if (is_hf && !opts.offline) {
+        hf_cache::hf_files xet_files;
+        for (const auto & f : hf.model_files) xet_files.push_back(f);
+        if (!hf.mmproj.path.empty()) xet_files.push_back(hf.mmproj);
+
+        if (hf_cache::all_files_xet_backed(xet_files)
+            && !hf.xet_token.access_token.empty()) {
+            std::string refresh_url;
+            auto endpoint = common_get_model_endpoint();
+            refresh_url = endpoint + "api/models/" + hf.primary.repo_id
+                        + "/xet-read-token/" + hf.primary.revision;
+
+            auto res = llama_xet::try_xet_download(
+                xet_files, hf.xet_token,
+                opts.bearer_token, refresh_url, opts.callback);
+
+            if (res.ok) {
+                // Files are at their local_path targets. Run the
+                // existing snapshot finalisation so the cache layout
+                // matches huggingface_hub's, then return.
+                for (const auto & f : hf.model_files) hf_cache::finalize_file(f);
+                result.model_path = hf.primary.final_path;
+                if (!hf.mmproj.path.empty()) {
+                    result.mmproj_path = hf_cache::finalize_file(hf.mmproj);
+                }
+                return result;
+            }
+            LOG_WRN("%s: xet download failed (%s); falling back to HTTPS\n",
+                    __func__, res.error.c_str());
+        }
+    }
+#endif
 
     std::vector<std::future<bool>> futures;
     for (const auto & task : tasks) {

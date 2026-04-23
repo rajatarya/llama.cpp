@@ -14,7 +14,8 @@ struct hf_file {
     std::string final_path;
     std::string oid;
     std::string repo_id;
-    size_t size = 0; // only for the migration
+    std::string revision;   // commit SHA this file was listed under
+    size_t size = 0;        // only for the migration
 
     // Xet content-addressed hash, populated from the HF tree API
     // `xetHash` field when a file is Xet-backed. Empty otherwise.
@@ -51,6 +52,17 @@ hf_xet_token get_xet_token(
 // Testable helper: parse the body of an HF xet-read-token response.
 // Returns a token with empty fields on any schema mismatch.
 hf_xet_token parse_xet_token_response(const std::string & body);
+
+// True iff the file list is non-empty AND every entry has a populated
+// xet_hash. Used by the orchestrator to decide whether the whole
+// batch can go through the llama-xet fast path.
+inline bool all_files_xet_backed(const hf_files & files) {
+    if (files.empty()) return false;
+    for (const auto & f : files) {
+        if (f.xet_hash.empty()) return false;
+    }
+    return true;
+}
 
 hf_files get_cached_files(const std::string & repo_id = {});
 
