@@ -189,12 +189,14 @@ if (LLAMA_XET)
         BUILD_IN_SOURCE    1
         INSTALL_COMMAND    ""
         BUILD_BYPRODUCTS   ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME}
+                           ${LLAMA_XET_PATH}/llama-xet.h
     )
 
     target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_XET)
     add_library(llama_xet STATIC IMPORTED)
     set_target_properties(llama_xet PROPERTIES IMPORTED_LOCATION ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME})
     add_dependencies(llama_xet llama_xet_ext)
+    target_include_directories(${TARGET} PRIVATE ${LLAMA_XET_PATH})
     target_link_libraries(${TARGET} PRIVATE llama_xet)
 endif()
 
