@@ -1,6 +1,18 @@
 # llama.cpp hf-xet Download Backend Implementation Plan
 
-> **Important — AI policy note:** llama.cpp's `AGENTS.md` forbids AI-generated code in upstream PRs. This plan is a reading reference for a **human contributor** (Rajat Arya, `@rajatarya`) — not a script for agent execution. All code in this document is illustrative; the contributor rewrites every line in their own voice, understands it, and defends it in review without AI assistance. Commits and PR descriptions are human-authored. AI assistance during implementation must be disclosed in the PR body per `AGENTS.md`.
+> **Two-phase execution.** This is exploratory work to decide whether the upstream investment is worth making. The decision point is the benchmark output from Task 17.
+>
+> **Phase 1 — Fork prototype (AI-assisted implementation, reviewed by contributor):**
+> Goal is to reach a working end-to-end Xet download path on the fork, run benchmarks, and confirm measurable benefits. AI-generated code is acceptable here because (a) the work lives on a private fork branch, (b) every commit is reviewed by the human contributor before it lands, and (c) none of this code goes upstream as-is.
+>
+> Branch: `prototype/xet-integration` (off `design/xet-integration` so the spec and this plan come along as reference).
+>
+> Phase 1 tasks: Preflight + 1–15, 17. (Task 16 CI matrix deferred until fork CI is set up. Tasks 18–20 are Phase 2 only.)
+>
+> **Phase 2 — Upstream PR (human-authored, only if Phase 1 benchmarks justify it):**
+> Contributor branches cleanly from `upstream/master`, rewrites every file in their own voice, files the issue, opens the PR. Per `AGENTS.md`, no AI-generated code in upstream PRs; AI assistance during design/investigation is disclosed in the PR body. The Phase 1 prototype is a reference implementation, not a source to copy from.
+>
+> The two-phase structure exists so the contributor does not invest days hand-authoring upstream-quality code before knowing whether the feature is worth shipping.
 
 **Goal:** Add an optional `LLAMA_XET` build flag that routes Hugging Face model downloads through xet-core's `XetSession` (chunk-level dedup + resume), with silent fallback to the existing cpp-httplib path for non-Xet-backed files or Xet errors.
 
@@ -1464,14 +1476,27 @@ Type/name consistency pass: `LlamaXetSession`, `LlamaXetFileInfo`, `LlamaXetProg
 
 ---
 
-## Handoff
+## Phase 1 execution plan (fork, AI-assisted)
 
-**This plan is a reading document for a human contributor.** The default skill offers "subagent-driven execution" or "inline execution" for implementation — **neither applies here** because llama.cpp's `AGENTS.md` forbids AI-generated code in upstream PRs. The contributor implements each task manually, using this document as scaffolding.
+Hybrid execution, agreed with contributor 2026-04-23:
 
-Recommended cadence:
-- Treat each Task as a session (1–2 hours). Start with a fresh read of the Task's goal + files + steps.
-- Commit at each "Commit" step. Don't batch commits — small commits are what llama.cpp reviewers prefer anyway.
-- After Task 7 (the C++ header landing), pause and open the upstream issue (Task 18) before pushing further.
-- After Task 12 (orchestrator hook), manually run `llama-cli -hf <xet-repo>` and confirm everything works end-to-end before Task 13.
+| Tasks | Mode | Rationale |
+|---|---|---|
+| Preflight P1–P4 | Contributor runs curl locally | Requires real HF token + live API |
+| 1, 2, 3 | Subagent-driven | Scaffolding; well-bounded; each task small |
+| 4, 5, 6, 7 | Subagent-driven | Rust FFI + C++ header; testable in isolation |
+| 8, 9 | **Inline** | HF API assumptions meet reality here — worth pausing to discuss if anything surprises us |
+| 10, 11, 12 | **Inline** | Orchestrator hook touches `common_download_model`; contributor wants eyes on each decision |
+| 13, 14 | Subagent-driven | Fallback test suite + opt-in E2E file |
+| 15 | Subagent-driven | Mechanical docs |
+| 17 | **Inline** | Benchmark design is load-bearing — contributor wants to shape it |
+
+Between each task: contributor reviews the commit, may request changes, then greenlights the next task.
+
+Task 16 (CI matrix) deferred — add when fork's GitHub Actions is enabled.
+
+Tasks 18–20 (upstream issue, draft PR, full PR) are **Phase 2 only** — after benchmark results are in and the decision to upstream is made.
+
+Contributor runs benchmarks (Task 17 output) on local hardware and on a fresh EC2 instance for a clean comparison.
 
 Ship it with care.
