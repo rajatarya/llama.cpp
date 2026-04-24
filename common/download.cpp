@@ -810,6 +810,25 @@ common_download_model_result common_download_model(const common_params_model  & 
 
         if (hf_cache::all_files_xet_backed(xet_files)
             && !hf.xet_token.access_token.empty()) {
+            // Short-circuit if every file is already on disk — the
+            // hf-cache resolver set file.local_path to the snapshot
+            // or blob path already, so fs::exists is authoritative.
+            bool all_cached = true;
+            for (const auto & f : xet_files) {
+                if (!std::filesystem::exists(f.local_path)) {
+                    all_cached = false;
+                    break;
+                }
+            }
+            if (all_cached) {
+                for (const auto & f : hf.model_files) hf_cache::finalize_file(f);
+                result.model_path = hf.primary.final_path;
+                if (!hf.mmproj.path.empty()) {
+                    result.mmproj_path = hf_cache::finalize_file(hf.mmproj);
+                }
+                return result;
+            }
+
             std::string refresh_url;
             auto endpoint = common_get_model_endpoint();
             refresh_url = endpoint + "api/models/" + hf.primary.repo_id
