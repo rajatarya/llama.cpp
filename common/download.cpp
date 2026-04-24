@@ -673,10 +673,12 @@ static void list_available_gguf_files(const hf_cache::hf_files & files) {
 }
 
 struct hf_plan {
-    hf_cache::hf_file     primary;
-    hf_cache::hf_files    model_files;
-    hf_cache::hf_file     mmproj;
-    hf_cache::hf_xet_token xet_token;   // populated iff any file has a xetHash
+    hf_cache::hf_file  primary;
+    hf_cache::hf_files model_files;
+    hf_cache::hf_file  mmproj;
+    // Note: xet-read-token is fetched lazily inside common_download_model
+    // (only when we're actually about to dispatch a Xet download), not
+    // here in the plan — cache-hit flows skip the network call entirely.
 };
 
 static hf_plan get_hf_plan(const common_params_model  & model,
@@ -725,17 +727,6 @@ static hf_plan get_hf_plan(const common_params_model  & model,
 
     if (download_mmproj) {
         plan.mmproj = find_best_mmproj(all, primary.path);
-    }
-
-    // If any file in the final plan has a xetHash, fetch a scoped
-    // Xet-CAS read token so the orchestrator can take the fast path.
-    // Cheap HTTP call; only fired when there's a plausible Xet path.
-    bool any_xet = !plan.primary.xet_hash.empty();
-    for (const auto & f : plan.model_files) any_xet = any_xet || !f.xet_hash.empty();
-    if (!plan.mmproj.path.empty()) any_xet = any_xet || !plan.mmproj.xet_hash.empty();
-    if (any_xet && !opts.offline) {
-        plan.xet_token = hf_cache::get_xet_token(
-            repo, plan.primary.revision, opts.bearer_token);
     }
 
     return plan;
@@ -798,21 +789,25 @@ common_download_model_result common_download_model(const common_params_model  & 
     }
 
 #ifdef LLAMA_USE_XET
-    // Fast path: if this is an HF download and every file is Xet-backed
-    // and we have a scoped CAS token, run the whole batch through
-    // llama-xet. Any failure (including schema mismatches, auth
-    // problems, or mid-stream errors) falls through silently to the
-    // existing std::async + cpp-httplib fanout below.
+    // Fast path: if this is an HF download and every file is Xet-backed,
+    // we have all files already on disk OR a scoped CAS token gets us to
+    // the Xet CAS, run the whole batch through llama-xet. Any failure
+    // (schema mismatches, auth, mid-stream) falls through silently to
+    // the existing std::async + cpp-httplib fanout below.
+    //
+    // Decision order avoids network work on warm-cache flows:
+    //   1. Is this HF + online + all-files-xet-backed?  If no, skip xet.
+    //   2. Are all target files already on disk?  If yes, just finalize
+    //      and return. No xet-read-token fetch needed.
+    //   3. Otherwise, NOW fetch the xet-read-token and dispatch the
+    //      Xet batch download.
     if (is_hf && !opts.offline) {
         hf_cache::hf_files xet_files;
         for (const auto & f : hf.model_files) xet_files.push_back(f);
         if (!hf.mmproj.path.empty()) xet_files.push_back(hf.mmproj);
 
-        if (hf_cache::all_files_xet_backed(xet_files)
-            && !hf.xet_token.access_token.empty()) {
-            // Short-circuit if every file is already on disk — the
-            // hf-cache resolver set file.local_path to the snapshot
-            // or blob path already, so fs::exists is authoritative.
+        if (hf_cache::all_files_xet_backed(xet_files)) {
+            // Step 2: cache-completeness check BEFORE any network call.
             bool all_cached = true;
             for (const auto & f : xet_files) {
                 if (!std::filesystem::exists(f.local_path)) {
@@ -829,28 +824,34 @@ common_download_model_result common_download_model(const common_params_model  & 
                 return result;
             }
 
-            std::string refresh_url;
-            auto endpoint = common_get_model_endpoint();
-            refresh_url = endpoint + "api/models/" + hf.primary.repo_id
-                        + "/xet-read-token/" + hf.primary.revision;
+            // Step 3: at least one file needs downloading — only now
+            // do we pay for the xet-read-token round-trip.
+            auto xet_token = hf_cache::get_xet_token(
+                hf.primary.repo_id, hf.primary.revision, opts.bearer_token);
 
-            auto res = llama_xet::try_xet_download(
-                xet_files, hf.xet_token,
-                opts.bearer_token, refresh_url, opts.callback);
+            if (!xet_token.access_token.empty()) {
+                auto endpoint = common_get_model_endpoint();
+                std::string refresh_url = endpoint
+                    + "api/models/" + hf.primary.repo_id
+                    + "/xet-read-token/" + hf.primary.revision;
 
-            if (res.ok) {
-                // Files are at their local_path targets. Run the
-                // existing snapshot finalisation so the cache layout
-                // matches huggingface_hub's, then return.
-                for (const auto & f : hf.model_files) hf_cache::finalize_file(f);
-                result.model_path = hf.primary.final_path;
-                if (!hf.mmproj.path.empty()) {
-                    result.mmproj_path = hf_cache::finalize_file(hf.mmproj);
+                auto res = llama_xet::try_xet_download(
+                    xet_files, xet_token,
+                    opts.bearer_token, refresh_url, opts.callback);
+
+                if (res.ok) {
+                    for (const auto & f : hf.model_files) hf_cache::finalize_file(f);
+                    result.model_path = hf.primary.final_path;
+                    if (!hf.mmproj.path.empty()) {
+                        result.mmproj_path = hf_cache::finalize_file(hf.mmproj);
+                    }
+                    return result;
                 }
-                return result;
+                LOG_WRN("%s: xet download failed (%s); falling back to HTTPS\n",
+                        __func__, res.error.c_str());
+            } else {
+                LOG_DBG("%s: xet-read-token fetch failed; falling back to HTTPS\n", __func__);
             }
-            LOG_WRN("%s: xet download failed (%s); falling back to HTTPS\n",
-                    __func__, res.error.c_str());
         }
     }
 #endif

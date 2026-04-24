@@ -1,5 +1,7 @@
 #pragma once
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <string>
 #include <vector>
 
@@ -49,9 +51,12 @@ hf_xet_token get_xet_token(
     const std::string & token
 );
 
-// Testable helper: parse the body of an HF xet-read-token response.
-// Returns a token with empty fields on any schema mismatch.
-hf_xet_token parse_xet_token_response(const std::string & body);
+// Testable helpers: parse an HF xet-read-token response into hf_xet_token.
+// The json-body overload is canonical; the string overload is a thin
+// convenience that parses + delegates (used by the unit tests so they
+// can exercise malformed-JSON handling).
+hf_xet_token parse_xet_token_response(const nlohmann::json & j);
+hf_xet_token parse_xet_token_response(const std::string &  body);
 
 // True iff the file list is non-empty AND every entry has a populated
 // xet_hash. Used by the orchestrator to decide whether the whole

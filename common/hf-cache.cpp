@@ -229,35 +229,40 @@ static nl::json api_get(const std::string & url,
 
 // Parse an HF xet-read-token JSON response into hf_xet_token.
 //
-// Expected schema (to be verified against live API in Preflight P2):
+// Expected schema (verified against live API 2026-04-23):
 //   {
 //     "accessToken": "eyJ...",       // bearer for CAS calls
 //     "exp":         1234567890,     // unix seconds
 //     "casUrl":      "https://..."   // CAS server base URL
 //   }
 //
-// Adjust field names here if the live response uses different casing.
 // Returns empty fields on any mismatch — caller must check
 // access_token.empty() and fall back.
-hf_xet_token parse_xet_token_response(const std::string & body) {
+hf_xet_token parse_xet_token_response(const nl::json & j) {
     hf_xet_token out;
-    try {
-        auto j = nl::json::parse(body);
-        if (!j.is_object()) return out;
+    if (!j.is_object()) return out;
 
-        if (j.contains("accessToken") && j["accessToken"].is_string()) {
-            out.access_token = j["accessToken"].get<std::string>();
-        }
-        if (j.contains("exp") && j["exp"].is_number_unsigned()) {
-            out.expiry_unix_secs = j["exp"].get<uint64_t>();
-        }
-        if (j.contains("casUrl") && j["casUrl"].is_string()) {
-            out.cas_url = j["casUrl"].get<std::string>();
-        }
-    } catch (const std::exception &) {
-        out = {};
+    if (j.contains("accessToken") && j["accessToken"].is_string()) {
+        out.access_token = j["accessToken"].get<std::string>();
+    }
+    // Accept any JSON number and clamp negatives to 0 — some serializers
+    // emit signed timestamps. is_number_unsigned was too strict.
+    if (j.contains("exp") && j["exp"].is_number()) {
+        auto raw = j["exp"].get<int64_t>();
+        out.expiry_unix_secs = raw < 0 ? 0 : static_cast<uint64_t>(raw);
+    }
+    if (j.contains("casUrl") && j["casUrl"].is_string()) {
+        out.cas_url = j["casUrl"].get<std::string>();
     }
     return out;
+}
+
+hf_xet_token parse_xet_token_response(const std::string & body) {
+    try {
+        return parse_xet_token_response(nl::json::parse(body));
+    } catch (const std::exception &) {
+        return {};
+    }
 }
 
 hf_xet_token get_xet_token(const std::string & repo_id,
@@ -266,9 +271,9 @@ hf_xet_token get_xet_token(const std::string & repo_id,
     try {
         auto endpoint = common_get_model_endpoint();
         auto j = api_get(endpoint + "api/models/" + repo_id + "/xet-read-token/" + rev, token);
-        // Stringify and re-parse via the shared helper — small cost,
-        // keeps the parsing logic in one testable place.
-        return parse_xet_token_response(j.dump());
+        // Direct json overload — avoids allocating an intermediate
+        // serialized string only to re-parse it.
+        return parse_xet_token_response(j);
     } catch (const std::exception & e) {
         LOG_DBG("%s: xet-read-token fetch failed for %s@%s: %s\n",
                 __func__, repo_id.c_str(), rev.c_str(), e.what());
