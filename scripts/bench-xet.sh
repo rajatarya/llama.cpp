@@ -56,18 +56,19 @@ clear_cache() {
     rm -rf "$HF_CACHE/models--$repo_safe"
 }
 
-# Time one download-only run (no inference). Returns wall-clock seconds.
-# Uses -n 1 with stdin closed to force early exit.
+# Time one download-only run (download + model load + 1 token + exit).
+# -st (--single-turn) makes llama-cli exit after one prompt without
+# entering the interactive chat loop. Both the OFF and ON builds pay
+# the same model-load + one-token cost, so the delta is attributable
+# to the download phase.
 time_one_download() {
     local build_dir="$1" repo="$2" file_arg="$3"
     local start end
     start=$(date +%s.%N)
     (
-        # We only want download + model load to complete; immediately exit.
-        # Redirect stdout so the chat prompt can't hang.
         </dev/null "$build_dir/bin/llama-cli" \
             -hf "$repo" ${file_arg:+-hff "$file_arg"} -hft "${HF_TOKEN:-}" \
-            -n 1 -p "hi" --no-warmup -no-cnv >/dev/null 2>&1 || true
+            -n 1 -p "hi" --no-warmup -st >/dev/null 2>&1 || true
     )
     end=$(date +%s.%N)
     awk -v s="$start" -v e="$end" 'BEGIN { printf "%.2f", e - s }'
