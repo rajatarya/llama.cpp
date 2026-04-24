@@ -8,12 +8,17 @@
 # This script will create them automatically if missing.
 #
 # Env:
-#   HF_TOKEN                — required for private/gated repos
-#   BENCH_REPO              — default ggml-org/gemma-3-1b-it-GGUF
-#   BENCH_FILE              — optional specific file in the repo
-#   BENCH_QUANT_B           — optional second repo/file for the "variant dedup" scenario
-#   BENCH_RUNS              — number of timed runs per cell (default 3)
-#   BENCH_OUT               — output Markdown file (default bench-xet-results.md)
+#   HF_TOKEN            — required for private/gated repos
+#   BENCH_REPO          — primary repo; default ggml-org/gemma-3-1b-it-GGUF
+#   BENCH_FILE          — specific file in BENCH_REPO (optional — empty lets
+#                         auto-selection pick Q4_K_M etc.)
+#   BENCH_VARIANT_FILE  — second file within BENCH_REPO for the same-repo
+#                         variant-dedup scenario (e.g. the other quant)
+#   BENCH_QUANT_B       — DIFFERENT repo for cross-repo variant-dedup; used
+#                         only when BENCH_VARIANT_FILE is not set
+#   BENCH_NONXET_REPO   — legacy LFS-only repo for the fallback-cost scenario
+#   BENCH_RUNS          — number of timed runs per cell (default 3)
+#   BENCH_OUT           — output Markdown file (default bench-xet-results.md)
 #
 # Scenarios run:
 #   1. Cold cache download (the big one)
@@ -33,6 +38,7 @@ cd "$REPO_ROOT"
 
 BENCH_REPO="${BENCH_REPO:-ggml-org/gemma-3-1b-it-GGUF}"
 BENCH_FILE="${BENCH_FILE:-}"
+BENCH_VARIANT_FILE="${BENCH_VARIANT_FILE:-}"
 BENCH_QUANT_B="${BENCH_QUANT_B:-}"
 BENCH_RUNS="${BENCH_RUNS:-3}"
 BENCH_OUT="${BENCH_OUT:-bench-xet-results.md}"
@@ -173,16 +179,30 @@ log "measuring LLAMA_XET=ON"
 xet_warm=$(measure_warm build-xet "$BENCH_REPO" "$BENCH_FILE")
 echo "| LLAMA_XET=ON  | $(echo "$xet_warm" | tr ' ' '\n' | mean_stddev) |" >> "$BENCH_OUT"
 
-if [ -n "$BENCH_QUANT_B" ]; then
+if [ -n "$BENCH_VARIANT_FILE" ] || [ -n "$BENCH_QUANT_B" ]; then
+    # Decide the variant shape: same-repo (different file) or cross-repo.
+    if [ -n "$BENCH_VARIANT_FILE" ]; then
+        variant_repo="$BENCH_REPO"
+        variant_file="$BENCH_VARIANT_FILE"
+        variant_desc="same repo, different file — \`$BENCH_VARIANT_FILE\`"
+    else
+        variant_repo="$BENCH_QUANT_B"
+        variant_file=""
+        variant_desc="different repo — \`$BENCH_QUANT_B\`"
+    fi
+
     {
         echo
-        echo "## Scenario 3 — Variant dedup (different quant of same base)"
+        echo "## Scenario 3 — Variant dedup"
         echo
         echo "Primary: \`$BENCH_REPO\` ${BENCH_FILE:+(\`$BENCH_FILE\`)}"
-        echo "Variant: \`$BENCH_QUANT_B\`"
+        echo "Variant: $variant_desc"
         echo
-        echo "Cache is primed with the PRIMARY, then the VARIANT is downloaded."
-        echo "LLAMA_XET should fetch notably less bandwidth than LLAMA_XET=OFF."
+        echo "Per iteration: cache cleared, primary downloaded (untimed prime),"
+        echo "then the variant downloaded and timed. Xet should be faster on"
+        echo "the variant because chunks shared with the primary are already"
+        echo "on disk. cpp-httplib doesn't know about chunks and re-fetches"
+        echo "the whole variant file."
         echo
         echo "| Build | Variant download time |"
         echo "|---|---|"
@@ -191,15 +211,18 @@ if [ -n "$BENCH_QUANT_B" ]; then
     log "== Scenario 3: variant dedup =="
     for build in nox xet; do
         flag=$([ "$build" = "nox" ] && echo OFF || echo ON)
-        clear_cache "$BENCH_REPO"
-        clear_cache "$BENCH_QUANT_B"
-        # Prime the cache with the primary.
-        time_one_download "build-$build" "$BENCH_REPO" "$BENCH_FILE" >/dev/null
-        # Measure the variant's download time.
         samples=()
         for i in $(seq 1 "$BENCH_RUNS"); do
-            clear_cache "$BENCH_QUANT_B"
-            t=$(time_one_download "build-$build" "$BENCH_QUANT_B" "")
+            # Fresh start every iteration: clear both primary and
+            # (if different) variant repos so no prior cache leaks in.
+            clear_cache "$BENCH_REPO"
+            [ "$variant_repo" != "$BENCH_REPO" ] && clear_cache "$variant_repo"
+            # Prime — untimed. Populates primary's blob + any chunks
+            # xet-core learned about during that download.
+            time_one_download "build-$build" "$BENCH_REPO" "$BENCH_FILE" >/dev/null
+            # Measured run — the variant download. With Xet, shared
+            # chunks come from local disk; cpp-httplib fetches all.
+            t=$(time_one_download "build-$build" "$variant_repo" "$variant_file")
             samples+=("$t")
             log "  variant run $i/$BENCH_RUNS (build-$build): ${t}s"
         done
