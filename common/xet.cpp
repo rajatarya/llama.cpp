@@ -19,6 +19,13 @@ static std::string append_suffix(const std::string & path, const char * sfx) {
     return path + sfx;
 }
 
+// Thread-local label for the xet progress bar. Set by try_xet_download
+// before dispatching the Rust call; read by the callback thunk.
+// Thread-local because the progress callback runs on a xet-owned
+// worker thread, and this keeps the label association unambiguous
+// even if multiple xet downloads ever run concurrently in one process.
+thread_local std::string g_xet_progress_label = "xet download";
+
 // Thunk that trampolines the C callback from llama-xet into a
 // C++ common_download_callback*. user_data is the callback pointer.
 extern "C" void xet_progress_thunk(void * user_data,
@@ -27,7 +34,7 @@ extern "C" void xet_progress_thunk(void * user_data,
     auto * cb = static_cast<common_download_callback *>(user_data);
     if (!cb) return;
     common_download_progress p;
-    p.url        = "xet://batch";
+    p.url        = g_xet_progress_label;
     p.downloaded = static_cast<size_t>(completed_bytes);
     p.total      = static_cast<size_t>(total_bytes);
     p.cached     = false;
@@ -96,10 +103,21 @@ try_result try_xet_download(
         return r;
     }
 
+    // Build a human-readable label for the progress bar — the repo +
+    // a hint that this is a xet batch. ProgressBar strips through the
+    // last '/' to produce the displayed filename, so we use a form that
+    // gives a useful suffix ("xet: N files, repo=org/repo").
+    {
+        std::string repo_id = files.front().repo_id;
+        g_xet_progress_label = "xet: " + std::to_string(files.size())
+                             + (files.size() == 1 ? " file" : " files")
+                             + ", " + repo_id;
+    }
+
     // Start-of-batch progress event so the CLI progress bar initializes.
     if (progress_cb) {
         common_download_progress p0;
-        p0.url    = "xet://batch";
+        p0.url    = g_xet_progress_label;
         p0.total  = 0;
         for (const auto & f : files) p0.total += f.size;
         progress_cb->on_start(p0);
@@ -113,7 +131,7 @@ try_result try_xet_download(
         r.error = "llama_xet_download_files rc=" + std::to_string(rc) + ": " + last_error();
         if (progress_cb) {
             common_download_progress p_fail;
-            p_fail.url        = "xet://batch";
+            p_fail.url        = g_xet_progress_label;
             p_fail.downloaded = 0;
             p_fail.total      = 0;
             for (const auto & f : files) p_fail.total += f.size;
@@ -159,7 +177,7 @@ try_result try_xet_download(
 
     if (progress_cb) {
         common_download_progress p_done;
-        p_done.url = "xet://batch";
+        p_done.url = g_xet_progress_label;
         p_done.downloaded = 0;
         p_done.total      = 0;
         for (const auto & f : files) {

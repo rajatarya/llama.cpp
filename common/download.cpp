@@ -835,9 +835,21 @@ common_download_model_result common_download_model(const common_params_model  & 
                     + "api/models/" + hf.primary.repo_id
                     + "/xet-read-token/" + hf.primary.revision;
 
+                // Mirror common_download_file_single: if the caller did
+                // not supply a progress callback, install a default TTY
+                // ProgressBar so users see download progress for the
+                // whole batch. ProgressBar::on_update is mutex-guarded
+                // and no-ops when stdout is not a TTY, so this is safe
+                // both interactively and in scripts.
+                ProgressBar              xet_tty_cb;
+                common_download_opts     xet_opts = opts;
+                if (!xet_opts.callback) {
+                    xet_opts.callback = &xet_tty_cb;
+                }
+
                 auto res = llama_xet::try_xet_download(
                     xet_files, xet_token,
-                    opts.bearer_token, refresh_url, opts.callback);
+                    opts.bearer_token, refresh_url, xet_opts.callback);
 
                 if (res.ok) {
                     for (const auto & f : hf.model_files) hf_cache::finalize_file(f);
