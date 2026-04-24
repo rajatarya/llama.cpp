@@ -178,26 +178,43 @@ if (LLAMA_XET)
             "(HF metadata API is still fetched over HTTPS).")
     endif()
 
-    include(ExternalProject)
     set(LLAMA_XET_SRC  ${CMAKE_SOURCE_DIR}/common/llama-xet)
     set(LLAMA_XET_PATH ${CMAKE_BINARY_DIR}/llama-xet/target/release)
     set(LLAMA_XET_LIB_NAME "${CMAKE_STATIC_LIBRARY_PREFIX}llama_xet${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(LLAMA_XET_STATICLIB ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME})
+    set(LLAMA_XET_HEADER    ${LLAMA_XET_PATH}/llama-xet.h)
 
-    ExternalProject_Add(llama_xet_ext
-        SOURCE_DIR         ${LLAMA_XET_SRC}
-        PREFIX             ${CMAKE_BINARY_DIR}/llama-xet
-        CONFIGURE_COMMAND  ""
-        BUILD_COMMAND      cargo build --release --target-dir ${CMAKE_BINARY_DIR}/llama-xet/target
-        BUILD_IN_SOURCE    1
-        BUILD_ALWAYS       1
-        INSTALL_COMMAND    ""
-        BUILD_BYPRODUCTS   ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME}
-                           ${LLAMA_XET_PATH}/llama-xet.h
-    )
+    # Explicit DEPENDS list so cargo only re-runs when Rust sources
+    # change (not on every cmake build). Replaces the old
+    # ExternalProject_Add + BUILD_ALWAYS pattern which forced cargo
+    # every build even when nothing had changed — a significant
+    # iteration-time cost for developers and CI.
+    #
+    # CONFIGURE_DEPENDS regenerates the glob on reconfigure, catching
+    # new source files added to src/. Cargo itself does the fine-
+    # grained within-file incremental work.
+    file(GLOB_RECURSE LLAMA_XET_RUST_SOURCES CONFIGURE_DEPENDS
+         ${LLAMA_XET_SRC}/src/*.rs)
+
+    add_custom_command(
+        OUTPUT  ${LLAMA_XET_STATICLIB} ${LLAMA_XET_HEADER}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/llama-xet/target
+        COMMAND cargo build --release --target-dir ${CMAKE_BINARY_DIR}/llama-xet/target
+        WORKING_DIRECTORY ${LLAMA_XET_SRC}
+        DEPENDS ${LLAMA_XET_RUST_SOURCES}
+                ${LLAMA_XET_SRC}/Cargo.toml
+                ${LLAMA_XET_SRC}/Cargo.lock
+                ${LLAMA_XET_SRC}/build.rs
+                ${LLAMA_XET_SRC}/cbindgen.toml
+        COMMENT "Building llama-xet staticlib + header (cargo)"
+        VERBATIM)
+
+    add_custom_target(llama_xet_ext
+                      DEPENDS ${LLAMA_XET_STATICLIB} ${LLAMA_XET_HEADER})
 
     target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_XET)
     add_library(llama_xet STATIC IMPORTED)
-    set_target_properties(llama_xet PROPERTIES IMPORTED_LOCATION ${LLAMA_XET_PATH}/${LLAMA_XET_LIB_NAME})
+    set_target_properties(llama_xet PROPERTIES IMPORTED_LOCATION ${LLAMA_XET_STATICLIB})
     add_dependencies(llama_xet llama_xet_ext)
     target_include_directories(${TARGET} PRIVATE ${LLAMA_XET_PATH})
     target_link_libraries(${TARGET} PRIVATE llama_xet)
