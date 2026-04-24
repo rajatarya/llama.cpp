@@ -7,11 +7,22 @@ fn main() {
 
     // Walk up from OUT_DIR to locate <target>/<profile>/ — the directory
     // that holds libllama_xet.a. Dropping llama-xet.h next to the staticlib
-    // lets CMake's ExternalProject_Add declare both as BUILD_BYPRODUCTS
-    // with a single ${LLAMA_XET_PATH} prefix.
+    // lets CMake declare both as a single OUTPUT from the custom command.
     //
-    // OUT_DIR layout: <target>/<profile>/build/<pkg>-<hash>/out
-    //                 ^^^^^^^^^^^^^^^^^^^^ we want this
+    // Cargo documents OUT_DIR as "build/<pkg>-<hash>/out" within the
+    // target directory (see https://doc.rust-lang.org/cargo/reference/
+    // environment-variables.html#environment-variables-cargo-sets-for-
+    // build-scripts). Walking up 3 ancestors gives us:
+    //
+    //   OUT_DIR         = <target>/<profile>/build/<pkg>-<hash>/out
+    //   ancestors[1]    = <target>/<profile>/build/<pkg>-<hash>
+    //   ancestors[2]    = <target>/<profile>/build
+    //   ancestors[3]    = <target>/<profile>          ← we want this
+    //
+    // This has been stable across Cargo versions since ~1.0 but is
+    // technically an implementation detail. If a future Cargo reshapes
+    // target layout, set LLAMA_XET_HEADER_OUT from CMake and read it
+    // here as a more explicit alternative.
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     let profile_dir = out_dir
         .ancestors()

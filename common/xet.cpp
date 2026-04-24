@@ -131,14 +131,30 @@ try_result try_xet_download(
     // Atomic rename each .xetInProgress to its final local_path.
     // hf_cache::finalize_file (called by the orchestrator after this)
     // will then create the snapshots/ symlink.
+    //
+    // If one rename fails partway through, roll back the earlier
+    // successful renames so the caller sees a clean "no files moved"
+    // state. Without this, the cpp-httplib fallback would see some
+    // final-path files present (which it would skip as "already done")
+    // and others missing — a messy mixed state. Rollback trades a bit
+    // of extra work for deterministic failure semantics.
+    size_t renamed = 0;
     for (size_t i = 0; i < in_progress_paths.size(); ++i) {
         std::error_code ec;
         fs::rename(in_progress_paths[i], files[i].local_path, ec);
         if (ec) {
             r.error = "rename(" + in_progress_paths[i] + " -> " + files[i].local_path
                     + "): " + ec.message();
+            // Roll back any successful renames.
+            for (size_t j = 0; j < renamed; ++j) {
+                std::error_code rbc;
+                fs::rename(files[j].local_path, in_progress_paths[j], rbc);
+                // Ignore rollback errors — we're already on the failure
+                // path and best-effort cleanup is the most we can do.
+            }
             return r;
         }
+        ++renamed;
     }
 
     if (progress_cb) {

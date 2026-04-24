@@ -64,9 +64,22 @@ struct try_result {
 // its `local_path`; the orchestrator is responsible for calling
 // hf_cache::finalize_file afterwards to create snapshot symlinks.
 //
-// On failure: .xetInProgress staging files are removed, final
-// local_path files are not touched; caller can safely fall through
-// to the cpp-httplib path which will resume or start fresh.
+// Progress callback:
+//   progress_cb is invoked from a BACKGROUND THREAD managed by
+//   llama-xet's progress poller (~every 250 ms during download).
+//   Implementations must be thread-safe. The existing ProgressBar
+//   in common/download.cpp meets this contract — it guards its
+//   shared state (lines map, stdout writes) with std::mutex. The
+//   existing cpp-httplib path already invokes callbacks concurrently
+//   from multiple std::async tasks, so this isn't a new constraint.
+//   on_start and on_done are invoked from the caller's thread, only
+//   on_update fires from the background thread.
+//
+// On failure: .xetInProgress staging files are removed and any
+// already-renamed files are rolled back to their staging names, so
+// the caller sees a clean "no files moved" state. The cpp-httplib
+// fallback can then resume or start fresh without tripping on partial
+// xet transaction state.
 try_result try_xet_download(
     const hf_cache::hf_files &     files,
     const hf_cache::hf_xet_token & xet_token,
